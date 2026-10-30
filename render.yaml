@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: signal-engine
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python signal_engine.py
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: SUPABASE_URL
+        value: https://dcbovugmihmwprsidcvk.supabase.co
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SYMBOLS
+        value: BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,SOLUSDT
+
+  - type: web
+    name: signal-dashboard
+    runtime: static
+    staticPublishPath: .
+    buildCommand: echo "static site"
