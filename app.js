@@ -2,24 +2,25 @@ const SUPABASE_URL = "https://dcbovugmihmwprsidcvk.supabase.co";
 const SUPABASE_KEY = "sb_publishable_8UknbOeF-3j2GA638zTptA_oT8IiSFn";
 
 const PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "EURJPY", "GBPJPY"];
-const HISTORY_LIMIT = 100;
+const HISTORY_LIMIT = 300;
 
 const { createClient } = window.supabase;
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let signals = [];
 let soundOn = false;
-let currentPair = PAIRS[0];
+let filterPair = PAIRS[0]; // "ALL" অথবা নির্দিষ্ট জোড়া
+let chartPair = PAIRS[0];
 let audioCtx = null;
 
 const $ = (id) => document.getElementById(id);
 const fmtPrice = (n) => Number(n).toLocaleString("en-US", { maximumFractionDigits: n < 10 ? 5 : n < 1000 ? 3 : 2 });
 const fmtTime = (iso) => new Date(iso).toLocaleTimeString("bn-BD", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const pairLabel = (s) => (s.endsWith("USDT") ? s.replace("USDT", "/USDT") : s.slice(0, 3) + "/" + s.slice(3));
+const visible = () => (filterPair === "ALL" ? signals : signals.filter((s) => s.symbol === filterPair));
 
 function loadChart(symbol) {
-  currentPair = symbol;
-  $("pairSelect").value = symbol;
+  chartPair = symbol;
   $("tv_chart").innerHTML = "";
   new TradingView.widget({
     container_id: "tv_chart",
@@ -90,7 +91,7 @@ function statusBadge(sig) {
 }
 
 function renderStats() {
-  const done = signals.filter((s) => s.status === "win" || s.status === "loss");
+  const done = visible().filter((s) => s.status === "win" || s.status === "loss");
   const wins = done.filter((s) => s.status === "win").length;
   const losses = done.length - wins;
   $("statWin").textContent = wins;
@@ -100,11 +101,12 @@ function renderStats() {
 
 function renderFeed() {
   const list = $("feed");
-  if (!signals.length) {
-    list.innerHTML = `<li class="text-muted text-sm text-center py-8">এখনো কোনো সিগন্যাল নেই।</li>`;
+  const items = visible();
+  if (!items.length) {
+    list.innerHTML = `<li class="text-muted text-sm text-center py-8">এই জোড়ায় এখনো কোনো সিগন্যাল নেই।</li>`;
     return;
   }
-  list.innerHTML = signals.map((s) => `
+  list.innerHTML = items.map((s) => `
     <li>
       <button data-sym="${s.symbol}" class="w-full text-left px-3 py-3 rounded-lg hover:bg-ink flex items-center gap-3">
         <span class="h-9 w-9 shrink-0 rounded-md flex items-center justify-center font-extrabold text-ink ${s.direction === "CALL" ? "bg-call" : "bg-put"}">
@@ -124,8 +126,11 @@ function renderFeed() {
 
 const RING = 2 * Math.PI * 34;
 function renderHero() {
-  const s = signals[0];
-  if (!s) return;
+  const s = visible()[0];
+  if (!s) {
+    $("hero").innerHTML = `<p class="text-muted py-8 text-center">এই জোড়ায় সিগন্যাল আসলে এখানে দেখাবে। অপেক্ষা করুন…</p>`;
+    return;
+  }
   const color = s.direction === "CALL" ? "#34D399" : "#F87171";
   $("hero").innerHTML = `
     <div class="slide-in flex items-center gap-5">
@@ -147,10 +152,14 @@ function renderHero() {
 }
 
 setInterval(() => {
-  const s = signals[0];
+  const s = visible()[0];
   const ring = $("ring"), count = $("count");
   if (!s || !ring || !count) return;
-  if (s.status !== "pending") { count.textContent = s.status === "win" ? "✓" : s.status === "loss" ? "✗" : "–"; ring.style.strokeDashoffset = 0; return; }
+  if (s.status !== "pending") {
+    count.textContent = s.status === "win" ? "✓" : s.status === "loss" ? "✗" : "–";
+    ring.style.strokeDashoffset = 0;
+    return;
+  }
   const left = Math.max(0, Math.ceil((new Date(s.expires_at) - Date.now()) / 1000));
   count.textContent = left + "s";
   ring.style.strokeDashoffset = RING * (1 - Math.min(1, left / 120));
@@ -181,9 +190,11 @@ function subscribe() {
       signals.unshift(sig);
       signals = signals.slice(0, HISTORY_LIMIT);
       renderAll();
-      beep(sig.direction);
-      notify(sig);
-      loadChart(sig.symbol);
+      // শুধু বেছে নেওয়া জোড়ার সিগন্যালে বিপ/নোটিফিকেশন
+      if (filterPair === "ALL" || sig.symbol === filterPair) {
+        beep(sig.direction);
+        notify(sig);
+      }
     })
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "signals" }, (payload) => {
       const i = signals.findIndex((s) => s.id === payload.new.id);
@@ -196,7 +207,15 @@ function subscribe() {
     });
 }
 
-$("pairSelect").innerHTML = PAIRS.map((p) => `<option value="${p}">${pairLabel(p)}</option>`).join("");
-$("pairSelect").addEventListener("change", (e) => loadChart(e.target.value));
-loadChart(currentPair);
+$("pairSelect").innerHTML =
+  `<option value="ALL">সব জোড়া</option>` +
+  PAIRS.map((p) => `<option value="${p}">${pairLabel(p)}</option>`).join("");
+$("pairSelect").value = filterPair;
+$("pairSelect").addEventListener("change", (e) => {
+  filterPair = e.target.value;
+  if (filterPair !== "ALL") loadChart(filterPair);
+  renderAll();
+});
+
+loadChart(chartPair);
 loadHistory().then(subscribe);
