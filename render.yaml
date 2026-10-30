@@ -14,7 +14,7 @@ services:
       - key: SUPABASE_KEY
         sync: false
       - key: SYMBOLS
-        value: BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,SOLUSDT
+        value: EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,EURJPY,GBPJPY
 
   - type: web
     name: signal-dashboard
