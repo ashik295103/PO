@@ -1,7 +1,7 @@
 const SUPABASE_URL = "https://dcbovugmihmwprsidcvk.supabase.co";
 const SUPABASE_KEY = "sb_publishable_8UknbOeF-3j2GA638zTptA_oT8IiSFn";
 
-const PAIRS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT"];
+const PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "EURJPY", "GBPJPY"];
 const HISTORY_LIMIT = 100;
 
 const { createClient } = window.supabase;
@@ -13,9 +13,9 @@ let currentPair = PAIRS[0];
 let audioCtx = null;
 
 const $ = (id) => document.getElementById(id);
-const fmtPrice = (n) => Number(n).toLocaleString("en-US", { maximumFractionDigits: n < 10 ? 5 : 2 });
+const fmtPrice = (n) => Number(n).toLocaleString("en-US", { maximumFractionDigits: n < 10 ? 5 : n < 1000 ? 3 : 2 });
 const fmtTime = (iso) => new Date(iso).toLocaleTimeString("bn-BD", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-const pairLabel = (s) => s.replace("USDT", "/USDT");
+const pairLabel = (s) => (s.endsWith("USDT") ? s.replace("USDT", "/USDT") : s.slice(0, 3) + "/" + s.slice(3));
 
 function loadChart(symbol) {
   currentPair = symbol;
@@ -24,7 +24,7 @@ function loadChart(symbol) {
   new TradingView.widget({
     container_id: "tv_chart",
     autosize: true,
-    symbol: "BINANCE:" + symbol,
+    symbol: (symbol.endsWith("USDT") ? "BINANCE:" : "FX:") + symbol,
     interval: "1",
     timezone: "Etc/UTC",
     theme: "dark",
