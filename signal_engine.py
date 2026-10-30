@@ -1,29 +1,28 @@
 import asyncio
-import json
 import logging
 import os
 import threading
+import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pandas as pd
 import requests
-import websockets
 from supabase import create_client
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://dcbovugmihmwprsidcvk.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
-SYMBOLS = [s.strip().upper() for s in os.getenv("SYMBOLS", "BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,SOLUSDT").split(",") if s.strip()]
-REST_BASE = os.getenv("REST_BASE", "https://data-api.binance.vision")
-WS_BASE = os.getenv("WS_BASE", "wss://data-stream.binance.vision")
+SYMBOLS = [s.strip().upper() for s in os.getenv("SYMBOLS", "EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,EURJPY,GBPJPY").split(",") if s.strip()]
 PORT = int(os.getenv("PORT", "10000"))
 
 RSI_PERIOD = 14
 EMA_FAST = 9
 EMA_SLOW = 21
-WARMUP_CANDLES = 300
 MAX_CANDLES = 500
+
+YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36"}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger("signal_engine")
@@ -56,6 +55,22 @@ def start_health_server():
     server = HTTPServer(("0.0.0.0", PORT), Health)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     log.info("Health server listening on port %s", PORT)
+
+
+def fetch_candles(symbol: str):
+    """Yahoo Finance থেকে ১-মিনিট ক্যান্ডেল: [(open_time_ms, close), ...]"""
+    r = requests.get(
+        YAHOO_URL.format(ticker=f"{symbol}=X"),
+        params={"interval": "1m", "range": "1d"},
+        headers=HEADERS,
+        timeout=15,
+    )
+    r.raise_for_status()
+    result = (r.json().get("chart", {}).get("result") or [None])[0]
+    if not result or "timestamp" not in result:
+        return []
+    closes = result["indicators"]["quote"][0]["close"]
+    return [(int(t) * 1000, float(c)) for t, c in zip(result["timestamp"], closes) if c is not None]
 
 
 def compute_indicators(symbol: str) -> pd.DataFrame:
@@ -96,7 +111,7 @@ def analyze(symbol: str):
         return None
 
     gap_pct = abs(last.ema_fast - last.ema_slow) / last.close * 100
-    strength = int(min(90, 55 + gap_pct * 400 + abs(last.rsi - 50) * 0.4))
+    strength = int(min(90, 55 + gap_pct * 3000 + abs(last.rsi - 50) * 0.4))
 
     return {
         "direction": direction,
@@ -153,10 +168,14 @@ async def on_closed_candle(symbol: str, open_ms: int, close_price: float):
             else:
                 status = "loss"
             await asyncio.to_thread(db_update, p["id"], {"status": status, "close_price": close_price})
-            log.info("%s %s -> %s (entry %.6f, close %.6f)", symbol, p["direction"], status, p["entry"], close_price)
+            log.info("%s %s -> %s (entry %.5f, close %.5f)", symbol, p["direction"], status, p["entry"], close_price)
         else:
             still_pending.append(p)
     pending[symbol] = still_pending
+
+    # পুরোনো ক্যান্ডেলে (২.৫ মিনিটের বেশি আগের) নতুন সিগন্যাল বানানো হবে না
+    if time.time() * 1000 - open_ms > 150_000:
+        return
 
     sig = analyze(symbol)
     if not sig:
@@ -178,48 +197,45 @@ async def on_closed_candle(symbol: str, open_ms: int, close_price: float):
         log.info("SIGNAL %s %s | %s | RSI %.1f | strength %s", symbol, sig["direction"], sig["strategy"], sig["rsi"], sig["strength"])
 
 
-def warmup(symbol: str):
-    r = requests.get(
-        f"{REST_BASE}/api/v3/klines",
-        params={"symbol": symbol, "interval": "1m", "limit": WARMUP_CANDLES},
-        timeout=15,
-    )
-    r.raise_for_status()
-    data = r.json()[:-1]
-    for k in data:
-        candles[symbol].append((int(k[0]), float(k[4])))
-    log.info("Warmup %s: %d candles", symbol, len(candles[symbol]))
+def current_minute_ms() -> int:
+    return int(time.time() // 60) * 60 * 1000
 
 
-async def stream_loop():
-    streams = "/".join(f"{s.lower()}@kline_1m" for s in SYMBOLS)
-    url = f"{WS_BASE}/stream?streams={streams}"
-    backoff = 1
-    while True:
+async def warmup():
+    for s in SYMBOLS:
         try:
-            async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
-                log.info("WebSocket connected: %s", ", ".join(SYMBOLS))
-                backoff = 1
-                async for raw in ws:
-                    msg = json.loads(raw).get("data", {})
-                    k = msg.get("k")
-                    if k and k.get("x"):
-                        await on_closed_candle(k["s"], int(k["t"]), float(k["c"]))
+            rows = await asyncio.to_thread(fetch_candles, s)
+            cur = current_minute_ms()
+            for t, c in rows:
+                if t < cur:
+                    candles[s].append((t, c))
+            log.info("Warmup %s: %d candles", s, len(candles[s]))
         except Exception as e:
-            log.warning("WebSocket error: %s - reconnecting in %ss", e, backoff)
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, 30)
+            log.error("Warmup failed for %s: %s", s, e)
+        await asyncio.sleep(0.5)
+
+
+async def poll_loop():
+    while True:
+        # প্রতি মিনিট শুরুর ৩ সেকেন্ড পরে নতুন ক্লোজড ক্যান্ডেল আনা
+        await asyncio.sleep(60 - (time.time() % 60) + 3)
+        for s in SYMBOLS:
+            try:
+                rows = await asyncio.to_thread(fetch_candles, s)
+                cur = current_minute_ms()
+                for t, c in rows:
+                    if t < cur and (not candles[s] or t > candles[s][-1][0]):
+                        await on_closed_candle(s, t, c)
+            except Exception as e:
+                log.warning("Fetch failed for %s: %s", s, e)
+            await asyncio.sleep(0.5)
 
 
 async def main():
     start_health_server()
     await asyncio.to_thread(cleanup_stale)
-    for s in SYMBOLS:
-        try:
-            await asyncio.to_thread(warmup, s)
-        except Exception as e:
-            log.error("Warmup failed for %s: %s", s, e)
-    await stream_loop()
+    await warmup()
+    await poll_loop()
 
 
 if __name__ == "__main__":
