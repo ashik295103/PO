@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>লাইভ ট্রেডিং সিগন্যাল</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=Noto+Sans+Bengali:wght@400;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Manrope', 'Noto Sans Bengali', 'system-ui', 'sans-serif'] },
+          colors: {
+            ink: '#0D1320', panel: '#141C2E', line: '#222C42',
+            muted: '#8B96AD', call: '#34D399', put: '#F87171', wait: '#FBBF24'
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    body { background: #0D1320; color: #E8ECF4; font-variant-numeric: tabular-nums; }
+    .ring { transition: stroke-dashoffset 1s linear; }
+    .slide-in { animation: slideIn .35s ease-out; }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .slide-in { animation: none; } .ring { transition: none; } }
+    button:focus-visible, select:focus-visible { outline: 2px solid #FBBF24; outline-offset: 2px; }
+    ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: #222C42; border-radius: 8px; }
+  </style>
+</head>
+<body class="font-sans min-h-screen">
+
+  <header class="border-b border-line">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center gap-4 justify-between">
+      <div class="flex items-center gap-3">
+        <h1 class="text-lg font-extrabold tracking-tight">লাইভ সিগন্যাল বোর্ড</h1>
+        <span id="status" class="flex items-center gap-2 text-sm text-muted">
+          <span id="statusDot" class="h-2.5 w-2.5 rounded-full bg-wait"></span>
+          <span id="statusText">সংযোগ হচ্ছে…</span>
+        </span>
+      </div>
+      <div class="flex items-center gap-3 text-sm">
+        <div class="flex items-center gap-4 bg-panel border border-line rounded-lg px-4 py-2">
+          <div><span class="text-muted">জয়</span> <b id="statWin" class="text-call">0</b></div>
+          <div><span class="text-muted">হার</span> <b id="statLoss" class="text-put">0</b></div>
+          <div><span class="text-muted">Win-rate</span> <b id="statRate">—</b></div>
+        </div>
+        <button id="soundBtn" class="bg-panel border border-line rounded-lg px-4 py-2 hover:border-wait" aria-pressed="false">
+          🔕 সাউন্ড বন্ধ
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-5 grid gap-5 lg:grid-cols-[1fr_380px]">
+
+    <section class="bg-panel border border-line rounded-xl overflow-hidden flex flex-col">
+      <div class="flex items-center gap-3 px-4 py-3 border-b border-line">
+        <label for="pairSelect" class="text-sm text-muted">জোড়া</label>
+        <select id="pairSelect" class="bg-ink border border-line rounded-md px-3 py-1.5 text-sm"></select>
+        <span class="text-xs text-muted ml-auto">সিগন্যালে ক্লিক করলে চার্ট বদলে যাবে</span>
+      </div>
+      <div id="tv_chart" class="h-[420px] lg:h-[560px]"></div>
+    </section>
+
+    <aside class="flex flex-col gap-5">
+      <section class="bg-panel border border-line rounded-xl p-5" aria-live="polite">
+        <h2 class="text-sm text-muted mb-3">সর্বশেষ সিগন্যাল</h2>
+        <div id="hero">
+          <p class="text-muted py-8 text-center">পরবর্তী ক্যান্ডেল ক্লোজে সিগন্যাল আসবে। অপেক্ষা করুন…</p>
+        </div>
+      </section>
+
+      <section class="bg-panel border border-line rounded-xl flex flex-col min-h-0">
+        <h2 class="text-sm text-muted px-5 pt-4 pb-2">সিগন্যাল ইতিহাস</h2>
+        <ul id="feed" class="px-2 pb-2 overflow-y-auto max-h-[420px] divide-y divide-line"></ul>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="max-w-7xl mx-auto px-4 pb-8 text-xs text-muted leading-relaxed">
+    ঝুঁকি-সতর্কতা: বাইনারি অপশন অত্যন্ত ঝুঁকিপূর্ণ এবং অনেক দেশে নিষিদ্ধ বা সীমিত। এটি ইন্ডিকেটর-ভিত্তিক শিক্ষামূলক টুল, আর্থিক পরামর্শ নয়।
+    কোনো সিগন্যালই লাভের নিশ্চয়তা দেয় না। উপরের Win-rate-ই এই ইঞ্জিনের আসল ফলাফল। ডেমো অ্যাকাউন্টে যাচাই না করে আসল টাকা লাগাবেন না।
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.58.0/dist/umd/supabase.js"></script>
+  <script src="https://s3.tradingview.com/tv.js"></script>
+  <script src="app.js"></script>
+</body>
+  </html>
